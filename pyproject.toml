@@ -1,0 +1,78 @@
+[project]
+name = "vecalex"
+version = "0.1.0"
+description = "OpenAlex + vectors = :)"
+readme = "README.md"
+authors = [
+  {name = "Thomas Eidens", email = "thomas.eidens@embo.org"}
+]
+maintainers = [
+  {name = "Thomas Eidens", email = "thomas.eidens@embo.org"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+license = "MIT"
+dependencies = [
+    "pyalex>=0.19",
+    "sentence-transformers>=5.1.2",
+]
+requires-python = ">= 3.10"
+
+[dependency-groups]
+dev = [
+    {include-group = "lint"},
+    {include-group = "test"},
+]
+lint = [
+    "ruff>=0.14.1",  # format/lint
+    "ty>=0.0.1a23",  # type check
+]
+test = [
+    "coverage>=7.11.0",  # report test coverage
+    "ipdb>=0.13.13",  # interactive debugging
+    "pytest>=8.4.2",  # run tests
+]
+publish = [
+    "build>=1.2.1",
+    "bump2version>=1.0.1",
+    "twine>=5.2.0",
+]
+
+[project.urls]
+bugs = "https://github.com/source-data/vecalex/issues"
+changelog = "https://github.com/source-data/vecalex/blob/main/HISTORY.md"
+homepage = "https://github.com/source-data/vecalex"
+
+[tool.ty]
+# All rules are enabled as "error" by default; no need to specify unless overriding.
+# Example override: relax a rule for the entire project (uncomment if needed).
+# rules.TY015 = "warn"  # For invalid-argument-type, warn instead of error.
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
