@@ -1,66 +1,11 @@
-"""Top-level package for vecalex."""
+"""vecalex public API.
 
-from pyalex import (
-    OpenAlexResponseList,
-    Publisher,
-    Publishers,
-    autocomplete,
-    invert_abstract,
-)
+The library no longer subclasses / augments `pyalex` entity types.
+Import entities from `pyalex` directly and use :class:`vecalex.Scope` to embed
+and compare texts / entities.
+"""
 
-from vecalex.vecalex import (
-    Author,
-    Authors,
-    Concept,
-    Concepts,
-    Domain,
-    Domains,
-    Field,
-    Fields,
-    Funder,
-    Funders,
-    Institution,
-    Institutions,
-    Journals,
-    People,
-    Source,
-    Sources,
-    Subfield,
-    Subfields,
-    Topic,
-    Topics,
-    Work,
-    Works,
-    config,
-)
+from vecalex.config import config
+from vecalex.scope import Scope
 
-__all__ = [
-    "Author",
-    "Authors",
-    "Concept",
-    "Concepts",
-    "Domain",
-    "Domains",
-    "Field",
-    "Fields",
-    "Funder",
-    "Funders",
-    "Institution",
-    "Institutions",
-    "Journals",
-    "OpenAlexResponseList",
-    "People",
-    "Publisher",
-    "Publishers",
-    "Source",
-    "Sources",
-    "Subfield",
-    "Subfields",
-    "Topic",
-    "Topics",
-    "Work",
-    "Works",
-    "autocomplete",
-    "config",
-    "invert_abstract",
-]
+__all__ = ["Scope", "config"]

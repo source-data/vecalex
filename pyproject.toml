@@ -22,8 +22,10 @@ classifiers = [
 ]
 license = "MIT"
 dependencies = [
-    "pyalex>=0.19",
+    "pyalex>=0.21",
     "sentence-transformers>=5.1.2",
+    "numpy>=1.24",
+    "tqdm>=4.67.1",
 ]
 requires-python = ">= 3.10"
 

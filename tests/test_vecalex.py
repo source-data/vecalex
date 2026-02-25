@@ -1,137 +1,108 @@
-"""Unit tests for the vecalex.scopes module."""
+"""Unit tests for vecalex Scope + config.
+
+These tests intentionally avoid hitting the OpenAlex API.
+"""
+
+from __future__ import annotations
 
 import numpy as np
-import pyalex
 import pytest
 
 import vecalex
+from vecalex.config import VecAlexConfig
+from vecalex.scope import Scope
 
 
-def test_vecalex_config_passthrough():
-    """Verify that pyalex config options are set when setting them in the vecalex config."""
-    new_max_retries = vecalex.config.max_retries + 2
-    assert pyalex.config.max_retries != new_max_retries
-    vecalex.config.max_retries = new_max_retries
-    assert pyalex.config.max_retries == new_max_retries
+class MockEmbedder:
+    """Deterministic embedder used to avoid sentence-transformers in tests."""
 
+    def __init__(self, dim: int = 4):
+        self.dim = dim
 
-@pytest.fixture
-def redefined_entity_classes():
-    return [
-        vecalex.Author,
-        vecalex.Concept,
-        vecalex.Domain,
-        vecalex.Field,
-        vecalex.Funder,
-        vecalex.Institution,
-        vecalex.Subfield,
-        vecalex.Work,
-    ]
-
-
-@pytest.fixture
-def redefined_query_classes():
-    return [
-        vecalex.Authors,
-        vecalex.Concepts,
-        vecalex.Domains,
-        vecalex.Fields,
-        vecalex.Funders,
-        vecalex.Institutions,
-        vecalex.Journals,
-        vecalex.People,
-        vecalex.Subfields,
-        vecalex.Works,
-    ]
+    def __call__(self, texts: list[str]) -> np.ndarray:
+        # Encode each text into a vector where the first component is the length.
+        # Then normalize to unit length so cosine similarities are stable.
+        vecs = []
+        for t in texts:
+            v = np.zeros(self.dim, dtype=float)
+            v[0] = float(len(t))
+            v[1] = float(sum(c.isalpha() for c in t))
+            v[2] = float(sum(c.isdigit() for c in t))
+            v[3] = 1.0
+            v = v / (np.linalg.norm(v) + 1e-12)
+            vecs.append(v)
+        return np.vstack(vecs)
 
 
 @pytest.fixture
-def original_entity_classes():
-    return [
-        vecalex.Publisher,
+def cfg() -> VecAlexConfig:
+    cfg = VecAlexConfig()
+    cfg.embedding_function = MockEmbedder(dim=4)
+    # keep defaults for aggregation
+    return cfg
+
+
+def test_scope_from_single_text(cfg: VecAlexConfig):
+    s = Scope("hello", cfg=cfg)
+    assert len(s) == 1
+    assert s.vectors.shape == (1, 4)
+
+
+def test_scope_from_list_of_texts(cfg: VecAlexConfig):
+    s = Scope(["a", "bb", "ccc"], cfg=cfg)
+    assert len(s) == 3
+    assert s.vectors.shape == (3, 4)
+
+
+def test_similarities_shape(cfg: VecAlexConfig):
+    a = Scope(["a", "bb"], cfg=cfg)
+    b = Scope(["a", "cccc", "dd"], cfg=cfg)
+    sims = a.similarities(b)
+    assert sims.shape == (2, 3)
+
+
+def test_closest_requires_single_item_scope(cfg: VecAlexConfig):
+    s = Scope(["a", "bb"], cfg=cfg)
+    with pytest.raises(ValueError):
+        _ = s.closest(["a", "bb"], top_n=1)
+
+
+def test_closest_sorts_by_similarity(cfg: VecAlexConfig):
+    query = Scope("abc", cfg=cfg)
+    candidates = ["a", "abc", "abcdef"]
+    closest, sims = query.closest(candidates, top_n=2)
+    assert len(closest) == 2
+    assert sims.shape == (2,)
+    # "abc" should be the closest to itself
+    assert closest[0] == "abc"
+    assert sims[0] >= sims[1]
+
+
+def test_scope_entity_embedding_function_shortcut(cfg: VecAlexConfig):
+    cfg.entity_embedding_function = lambda entity_id: np.array([1.0, 0.0, 0.0, 0.0])
+    s = Scope({"id": "https://openalex.org/A123"}, cfg=cfg)
+    assert len(s) == 1
+    assert s.vectors.shape == (1, 4)
+    assert np.allclose(s.vectors[0], np.array([1.0, 0.0, 0.0, 0.0]))
+
+
+def test_scope_entity_work_retrieval_and_aggregation(cfg: VecAlexConfig):
+    # Provide works with abstracts, embed them (mock), aggregate (mean).
+    cfg.work_retrieval_function = lambda entity_id: [
+        {"id": "https://openalex.org/W1", "abstract": "aaaa"},
+        {"id": "https://openalex.org/W2", "abstract": "bbbbbb"},
     ]
 
+    s = Scope({"id": "https://openalex.org/A123"}, cfg=cfg)
+    assert len(s) == 1
+    assert s.vectors.shape == (1, 4)
 
-@pytest.fixture
-def original_query_classes():
-    return [
-        vecalex.Publishers,
-    ]
-
-
-def test_openalex_entity_classes_redefined(redefined_entity_classes, original_entity_classes):
-    """Verify that vecalex OpenAlex classes correctly extend pyalex classes."""
-    for redefined_class in redefined_entity_classes:
-        class_name = redefined_class.__name__
-        original_class = getattr(pyalex, class_name)
-        assert redefined_class is not original_class, (
-            f"VecAlex class {class_name} must be a redefinition of the PyAlex class of the same name"
-        )
-        assert issubclass(redefined_class, original_class), (
-            f"VecAlex class {class_name} must be a subclass of the PyAlex class of the same name"
-        )
-    for original_class in original_entity_classes:
-        class_name = original_class.__name__
-        redefined_class = getattr(vecalex, class_name)
-        assert redefined_class is original_class, f"VecAlex class {class_name} must not be redefined"
+    # sanity: mean of two encoded vectors equals produced entity vector
+    assert cfg.embedding_function is not None
+    expected = cfg.embedding_function(["aaaa", "bbbbbb"]).mean(axis=0)
+    assert np.allclose(s.vectors[0], expected)
 
 
-def test_openalex_query_classes_redefined(redefined_query_classes, original_query_classes):
-    """Verify that vecalex OpenAlex query classes correctly extend pyalex classes."""
-    for redefined_class in redefined_query_classes:
-        class_name = redefined_class.__name__
-        original_class = getattr(pyalex, class_name)
-        assert redefined_class is not original_class, (
-            f"VecAlex class {class_name} must be a redefinition of the PyAlex class of the same name"
-        )
-        assert issubclass(redefined_class, original_class), (
-            f"VecAlex class {class_name} must be a subclass of the PyAlex class of the same name"
-        )
-        expected_resource_class_name = class_name[:-1]  # Remove plural 's'
-        expected_resource_class = getattr(vecalex, expected_resource_class_name)
-        assert redefined_class.resource_class is expected_resource_class, (
-            f"VecAlex query class {class_name} must use VecAlex entity class {expected_resource_class_name} "
-            "as its resource_class"
-        )
-    for original_class in original_query_classes:
-        class_name = original_class.__name__
-        redefined_class = getattr(vecalex, class_name)
-        assert redefined_class is original_class, f"VecAlex class {class_name} must not be redefined"
-
-
-def test_vecalex_entity_vec_property(redefined_entity_classes):
-    """Verify that VecAlexEntity has a 'vec' property."""
-    for entity_class in redefined_entity_classes:
-        if entity_class is vecalex.Work:
-            continue  # Work vec property tested separately
-        entity = entity_class({"id": "https://openalex.org/A1234567890"})
-        assert "works_api_url" not in entity and entity["vec"] is None, (
-            "VecAlexEntity 'vec' property should be None when no `works_api_url` property is present"
-        )
-
-
-# mock the SentenceTransformer to avoid loading a real model
-class MockSentenceTransformer:
-    n_dims = 768
-
-    def encode(self, docs, **kwargs):
-        # return vectors of length 768 filled with zeros
-        return np.full((len(docs), self.n_dims), fill_value=0.0)
-
-
-vecalex.config.model = MockSentenceTransformer()
-
-
-def test_vecalex_work_vec_property():
-    """Verify that the `vec` property of a vecalex Work is computed from its abstract."""
-    work = vecalex.Work(
-        {
-            "id": "https://openalex.org/W1234567890",
-            "abstract_inverted_index": {"This": [0], "is": [1], "a": [2], "test": [3], "abstract.": [4]},
-        }
-    )
-
-    assert work["vec"] is not None, "VecAlex Work 'vec' property should not be None when an abstract is present"
-    assert len(work["vec"]) == MockSentenceTransformer.n_dims, (
-        f"VecAlex Work 'vec' property should have length {MockSentenceTransformer.n_dims}"
-    )
+def test_public_api_exports():
+    assert hasattr(vecalex, "Scope")
+    assert hasattr(vecalex, "config")
