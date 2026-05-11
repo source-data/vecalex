@@ -26,7 +26,7 @@ logger = getLogger(__name__)
 WorkRetrievalFunction = Callable[[str], list[dict]]
 EmbeddingFunction = Callable[[list[str]], np.ndarray]
 AggregateEmbeddingsFunction = Callable[[np.ndarray], np.ndarray]
-EntityEmbeddingFunction = Callable[[str], np.ndarray]
+EntityEmbeddingFunction = Callable[[str], np.ndarray | None]
 
 
 def _default_aggregate_embeddings(work_vectors: np.ndarray) -> np.ndarray:
@@ -59,6 +59,18 @@ class VecAlexConfig:
 
     # Optional: precomputed entity vectors
     entity_embedding_function: EntityEmbeddingFunction | None = None
+
+    # Optional: HuggingFace-hosted entity vectors (parquet)
+    # When set, vecalex will lazily create an entity_embedding_function that looks up vectors
+    # from a Hive-partitioned HuggingFace dataset.
+    # Example: "tide/vecalex"
+    entity_embedding_dataset: str | None = None
+
+    # Expected partitioning scheme on HuggingFace.
+    # - "entity_type": hf://.../entity_type=<A|I|S|...>/*.parquet
+    # - "entity_type_bucket": hf://.../entity_type=<...>/bucket=<0..bucket_count-1>/*.parquet
+    entity_embedding_partitioning: str = "entity_type"
+    entity_embedding_bucket_count: int = 256
 
 
 config = VecAlexConfig()

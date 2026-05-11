@@ -86,6 +86,24 @@ def test_scope_entity_embedding_function_shortcut(cfg: VecAlexConfig):
     assert np.allclose(s.vectors[0], np.array([1.0, 0.0, 0.0, 0.0]))
 
 
+def test_scope_entity_embedding_function_falls_back(cfg: VecAlexConfig):
+    # If the embedding function cannot find a vector (returns None), Scope should
+    # fall back to work retrieval + embedding + aggregation.
+    cfg.entity_embedding_function = lambda entity_id: None
+    cfg.work_retrieval_function = lambda entity_id: [
+        {"id": "https://openalex.org/W1", "abstract": "aaaa"},
+        {"id": "https://openalex.org/W2", "abstract": "bbbbbb"},
+    ]
+
+    s = Scope({"id": "https://openalex.org/A123"}, cfg=cfg)
+    assert len(s) == 1
+    assert s.vectors.shape == (1, 4)
+
+    assert cfg.embedding_function is not None
+    expected = cfg.embedding_function(["aaaa", "bbbbbb"]).mean(axis=0)
+    assert np.allclose(s.vectors[0], expected)
+
+
 def test_scope_entity_work_retrieval_and_aggregation(cfg: VecAlexConfig):
     # Provide works with abstracts, embed them (mock), aggregate (mean).
     cfg.work_retrieval_function = lambda entity_id: [

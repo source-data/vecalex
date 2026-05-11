@@ -157,7 +157,55 @@ from vecalex import config
 
 def my_entity_embedding_function(entity_id: str) -> np.ndarray:
     # must accept an entity_id and return a 1D vector
+    # return None if not available (vecalex will fall back to default computation)
     return ...
 
 config.entity_embedding_function = my_entity_embedding_function
+
 ```
+
+#### HuggingFace-hosted precomputed entity vectors (parquet)
+
+If you have uploaded precomputed entity embeddings as parquet files to HuggingFace Datasets, vecalex can retrieve them
+directly (without downloading the full dataset) **if the dataset is Hive-partitioned**.
+
+Install optional dependencies:
+
+```bash
+pip install 'vecalex[hf]'
+```
+
+Then configure the dataset name:
+
+```python
+from vecalex import config
+
+config.entity_embedding_dataset = "tide/vecalex"  # HF dataset repo id
+
+# Optional tuning (defaults shown)
+config.entity_embedding_partitioning = "entity_type"  # or "entity_type_bucket"
+config.entity_embedding_bucket_count = 256
+```
+
+If an embedding cannot be found for a given entity ID, vecalex will automatically fall back to the default behavior
+(retrieve works → embed abstracts → aggregate).
+
+**Recommended dataset layout (fast ID lookups):**
+
+```
+entity_type=A/*.parquet
+entity_type=I/*.parquet
+entity_type=S/*.parquet
+...
+```
+
+For very large datasets, you can add an additional hash bucket partition to reduce the number of files per lookup:
+
+```
+entity_type=A/bucket=0/*.parquet
+entity_type=A/bucket=1/*.parquet
+...
+```
+
+See `scripts/partition_hf_entity_embeddings.py` for a DuckDB-based example of how to create these partitions.
+

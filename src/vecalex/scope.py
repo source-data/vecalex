@@ -22,8 +22,9 @@ from logging import getLogger
 from typing import Any
 
 import numpy as np
-from pyalex import invert_abstract, Works
+from pyalex import Works, invert_abstract
 from tqdm import tqdm
+
 from vecalex.config import VecAlexConfig, config
 
 logger = getLogger(__name__)
@@ -96,8 +97,6 @@ def _extract_work_abstract(work: dict[str, Any]) -> str | None:
         return work["abstract"]
     if work.get("abstract_inverted_index"):
         try:
-            
-
             return invert_abstract(work["abstract_inverted_index"])
         except Exception:
             logger.exception("Failed to invert abstract_inverted_index")
@@ -141,8 +140,29 @@ def _entity_vector(entity: OpenAlexEntityLike, *, cfg: VecAlexConfig) -> np.ndar
     if not isinstance(entity_id, str):
         raise TypeError("Entity dict must have an 'id' key with a string value")
 
+    # Optional fast path: precomputed entity vectors.
+    # Important: if the configured embedding function cannot find an embedding
+    # (returns None), we fall back to the default computation path.
+    vec: np.ndarray | None = None
+
     if cfg.entity_embedding_function is not None:
-        vec = np.asarray(cfg.entity_embedding_function(entity_id))
+        maybe = cfg.entity_embedding_function(entity_id)
+        if maybe is not None:
+            vec = np.asarray(maybe)
+    elif cfg.entity_embedding_dataset:
+        # Lazily resolve a HuggingFace-backed embedding function.
+        from vecalex.hf_embeddings import get_hf_entity_embedding_function
+
+        hf_fn = get_hf_entity_embedding_function(
+            cfg.entity_embedding_dataset,
+            partitioning=cfg.entity_embedding_partitioning,
+            bucket_count=cfg.entity_embedding_bucket_count,
+        )
+        maybe = hf_fn(entity_id)
+        if maybe is not None:
+            vec = np.asarray(maybe)
+
+    if vec is not None:
         if vec.ndim != 1:
             raise ValueError("entity_embedding_function must return a 1D vector")
         return vec
