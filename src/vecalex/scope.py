@@ -153,11 +153,7 @@ def _entity_vector(entity: OpenAlexEntityLike, *, cfg: VecAlexConfig) -> np.ndar
         # Lazily resolve a HuggingFace-backed embedding function.
         from vecalex.hf_embeddings import get_hf_entity_embedding_function
 
-        hf_fn = get_hf_entity_embedding_function(
-            cfg.entity_embedding_dataset,
-            partitioning=cfg.entity_embedding_partitioning,
-            bucket_count=cfg.entity_embedding_bucket_count,
-        )
+        hf_fn = get_hf_entity_embedding_function(cfg.entity_embedding_dataset)
         maybe = hf_fn(entity_id)
         if maybe is not None:
             vec = np.asarray(maybe)
