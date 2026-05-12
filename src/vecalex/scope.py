@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from logging import getLogger
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -82,7 +83,9 @@ def _embed_texts(texts: list[str], *, cfg: VecAlexConfig) -> np.ndarray:
     embed = cfg.embedding_function
     if embed is None:
         embed = _init_default_embedding_function(cfg)
+    t0 = perf_counter()
     vectors = np.asarray(embed(texts))
+    logger.debug("Embedded %d text(s) in %.3fs", len(texts), perf_counter() - t0)
 
     if vectors.ndim != 2 or vectors.shape[0] != len(texts):
         raise ValueError(
@@ -131,16 +134,14 @@ def _default_work_retrieval_function(entity: OpenAlexEntityLike, *, cfg: VecAlex
         f"&sort={cfg.work_sorting}"
         f"&select=id,abstract_inverted_index"
     )
-    logger.debug("Fetching works for %s from %s", entity_id, url)
-    return Works()._get_from_url(url)
+    logger.debug("Fetching works for %s", entity_id)
+    t0 = perf_counter()
+    works = Works()._get_from_url(url)
+    logger.debug("Fetched %d work(s) for %s in %.3fs", len(works), entity_id, perf_counter() - t0)
+    return works
 
 
-def _entity_vector(entity: OpenAlexEntityLike, *, cfg: VecAlexConfig) -> np.ndarray | None:
-    entity_id = entity.get("id")
-    if not isinstance(entity_id, str):
-        raise TypeError("Entity dict must have an 'id' key with a string value")
-
-    # Optional fast path: precomputed entity vectors.
+def _lookup_entity_vector(entity_id: str, cfg: VecAlexConfig) -> np.ndarray | None:
     # Important: if the configured embedding function cannot find an embedding
     # (returns None), we fall back to the default computation path.
     vec: np.ndarray | None = None
@@ -158,24 +159,64 @@ def _entity_vector(entity: OpenAlexEntityLike, *, cfg: VecAlexConfig) -> np.ndar
         if maybe is not None:
             vec = np.asarray(maybe)
 
+    logger.debug("Vector lookup %s: %s", entity_id, "hit" if vec is not None else "miss")
+    return vec
+
+
+def _work_vectors(entity: OpenAlexEntityLike, *, cfg: VecAlexConfig) -> np.ndarray:
+    work_retrieval = cfg.work_retrieval_function
+    if work_retrieval is None:
+        works = _default_work_retrieval_function(entity, cfg=cfg)
+    else:
+        works = work_retrieval(entity["id"])
+
+    # fast path: retrieve precomputed work vectors if available
+    # fallback: compute vectors from work abstracts
+    retrieved_vecs = []
+    abstracts = []
+    for work in works:
+        vec = _lookup_entity_vector(work["id"], cfg)
+        if vec is None:
+            abstracts.append(_extract_work_abstract(work))
+        else:
+            retrieved_vecs.append(vec)
+
+    n_no_abstract = abstracts.count(None)
+    if n_no_abstract:
+        logger.debug("%d/%d works had no abstract and will be skipped", n_no_abstract, len(works))
+    logger.debug(
+        "Work vectors for %s: %d precomputed, %d from abstract, %d no abstract",
+        entity.get("id"), len(retrieved_vecs), len(abstracts) - n_no_abstract, n_no_abstract,
+    )
+
+    computed_vecs = _embed_texts(abstracts, cfg=cfg)
+
+    if retrieved_vecs and computed_vecs.size > 0:
+        return np.vstack(retrieved_vecs + [computed_vecs[i] for i in range(computed_vecs.shape[0])])
+    if retrieved_vecs:
+        return np.vstack(retrieved_vecs)
+    if computed_vecs.size > 0:
+        return computed_vecs
+    return np.empty((0, 0), dtype=float)
+
+
+def _entity_vector(entity: OpenAlexEntityLike, *, cfg: VecAlexConfig) -> np.ndarray | None:
+    entity_id = entity.get("id")
+    if not isinstance(entity_id, str):
+        raise TypeError("Entity dict must have an 'id' key with a string value")
+
+    # Optional fast path: precomputed entity vectors.
+    vec = _lookup_entity_vector(entity_id, cfg)
     if vec is not None:
         if vec.ndim != 1:
             raise ValueError("entity_embedding_function must return a 1D vector")
         return vec
 
-    work_retrieval = cfg.work_retrieval_function
-    if work_retrieval is None:
-        works = _default_work_retrieval_function(entity, cfg=cfg)
-    else:
-        works = work_retrieval(entity_id)
-
-    abstracts = [a for a in (_extract_work_abstract(w) for w in works) if a]
-    if not abstracts:
+    # fallback: retrieve vectors for this entity's works and aggregate them
+    work_vectors = _work_vectors(entity, cfg=cfg)
+    if work_vectors is None or work_vectors.size == 0:
         return None
 
-    work_vectors = _embed_texts(abstracts, cfg=cfg)
-    if work_vectors.size == 0:
-        return None
     vec = np.asarray(cfg.aggregate_embeddings(work_vectors))
     if vec.ndim != 1:
         raise ValueError("aggregate_embeddings must return a 1D vector")
@@ -221,6 +262,7 @@ class Scope:
         for item in tqdm(items, desc="Processing Scope items", unit="item", disable=not progress):
             vec = _item_vector(item, cfg=cfg)
             if vec is None:
+                logger.debug("No vector for %r; dropping from Scope", item)
                 continue
             kept_items.append(item)
             vectors_list.append(np.asarray(vec, dtype=float))

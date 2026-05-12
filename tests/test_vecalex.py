@@ -121,6 +121,53 @@ def test_scope_entity_work_retrieval_and_aggregation(cfg: VecAlexConfig):
     assert np.allclose(s.vectors[0], expected)
 
 
+def test_scope_entity_embedding_function_falls_back_for_works(cfg: VecAlexConfig):
+    cfg.entity_embedding_function = lambda entity_id: (
+        np.array([1.0, 0.0, 0.0, 0.0])
+        if entity_id == "https://openalex.org/W1"
+        else np.array([0.0, 1.0, 0.0, 0.0])
+        if entity_id == "https://openalex.org/W2"
+        else None
+    )
+    cfg.work_retrieval_function = lambda entity_id: [
+        {"id": "https://openalex.org/W1", "abstract": "aaaa"},
+        {"id": "https://openalex.org/W2", "abstract": "bbbbbb"},
+    ]
+
+    s = Scope({"id": "https://openalex.org/A123"}, cfg=cfg)
+    assert len(s) == 1
+    assert s.vectors.shape == (1, 4)
+
+    assert cfg.embedding_function is not None
+    expected_retrieved = np.array([0.5, 0.5, 0.0, 0.0])  # mean of the two work vectors
+    expected_embedded = cfg.embedding_function(["aaaa", "bbbbbb"]).mean(axis=0)
+    assert not np.allclose(expected_embedded, expected_retrieved), (
+        "Sanity check failed: work vectors must be retrieved by the embedding function, not re-embedded from abstracts"
+    )
+    assert np.allclose(s.vectors[0], expected_retrieved), (
+        "Entity vector should be the mean of the retrieved work vectors"
+    )
+
+
+def test_work_vectors_mixed_precomputed_and_abstract(cfg: VecAlexConfig):
+    # W1 has a precomputed vector; W2 does not and falls back to abstract embedding.
+    # The entity vector is the mean of both.
+    work_vec = np.array([0.0, 0.0, 1.0, 0.0])
+    cfg.entity_embedding_function = lambda entity_id: (work_vec if entity_id == "https://openalex.org/W1" else None)
+    cfg.work_retrieval_function = lambda entity_id: [
+        {"id": "https://openalex.org/W1"},
+        {"id": "https://openalex.org/W2", "abstract": "aaaa"},
+    ]
+
+    s = Scope({"id": "https://openalex.org/A123"}, cfg=cfg)
+    assert len(s) == 1
+
+    assert cfg.embedding_function is not None
+    abstract_vec = cfg.embedding_function(["aaaa"])[0]
+    expected = np.mean([work_vec, abstract_vec], axis=0)
+    np.testing.assert_allclose(s.vectors[0], expected)
+
+
 def test_public_api_exports():
     assert hasattr(vecalex, "Scope")
     assert hasattr(vecalex, "config")
